@@ -1,0 +1,14 @@
+# Секреты и локальные артефакты
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.pcap
+*.pcapng
+*.log
+*.bak
+*.tmp
+.obsidian/workspace.json
+.obsidian/cache

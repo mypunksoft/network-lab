@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+vm=${1:-}
+case "$vm" in
+    arch|debian|windows10) ;;
+    *) echo "Use arch, debian, or windows10" >&2; exit 2 ;;
+esac
+
+capture_root=/mnt/disk1/vm-pcaps
+if ! mountpoint -q /mnt/disk1; then
+    echo "/mnt/disk1 is not mounted" >&2
+    exit 1
+fi
+if [[ -L $capture_root ]]; then
+    echo "Capture directory must not be a symlink" >&2
+    exit 1
+fi
+if [[ $(virsh -c qemu:///system domstate "$vm") != running ]]; then
+    echo "$vm is not running" >&2
+    exit 1
+fi
+
+mac=$(virsh -c qemu:///system domiflist "$vm" | awk '$3 == "vm-test" { print $5; exit }')
+if [[ ! $mac =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
+    echo "Could not find the vm-test MAC for $vm" >&2
+    exit 1
+fi
+
+exec 9>/run/lock/vmcap.lock
+if ! flock -n 9; then
+    echo "Another VM capture is already running" >&2
+    exit 1
+fi
+
+install -d -m 0700 -o portfolio -g portfolio "$capture_root"
+used_mb=$(du -sm "$capture_root" | awk '{ print $1 }')
+if (( used_mb > 90000 )); then
+    echo "Capture archive exceeds 90 GB; review old sessions before starting another" >&2
+    exit 1
+fi
+
+session_dir="$capture_root/$vm/$(date -u +%Y%m%dT%H%M%SZ)"
+install -d -m 0700 -o portfolio -g portfolio "$capture_root/$vm" "$session_dir"
+echo "Capturing $vm ($mac) on enp2s0 to $session_dir; up to 10 GB for this session"
+
+tcpdump -i enp2s0 -nn -s 0 -B 4096 -C 100 -W 100 -U -Z portfolio \
+    -w "$session_dir/capture.pcap" ether host "$mac" &
+capture_pid=$!
+cleanup() {
+    kill -TERM "$capture_pid" 2>/dev/null || true
+    wait "$capture_pid" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+while kill -0 "$capture_pid" 2>/dev/null; do
+    sleep 5
+    if [[ $(virsh -c qemu:///system domstate "$vm" 2>/dev/null || true) != running ]]; then
+        echo "$vm stopped; ending capture"
+        break
+    fi
+done

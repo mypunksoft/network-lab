@@ -1,0 +1,11 @@
+[Unit]
+Description=Selective packet capture for VM %i
+RequiresMountsFor=/mnt/disk1/vm-pcaps
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/vmcap-run %i
+KillMode=mixed
+TimeoutStopSec=15
+Restart=no
+
